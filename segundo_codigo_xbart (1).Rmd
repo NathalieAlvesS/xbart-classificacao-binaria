@@ -1,0 +1,2004 @@
+---
+title: "CORRECAO"
+author: "Nathalie Alves"
+date: "2026-09-15"
+output: html_document
+---
+
+**APLICAÇÃO DO XBART À BASE ADULT AUTISM SCREENING
+
+
+*1. PACOTES
+
+
+```{r}
+
+
+library(foreign)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(tidyr)
+library(writexl)
+library(XBART)
+library(pROC)
+
+setwd("C:/Users/natha/OneDrive/Documentos/XBART_ARTIGO")
+
+
+```
+** 2. LEITURA DA BASE**
+
+```{r}
+
+dados <- foreign::read.arff(
+  "Autism-Adult-Data.arff"
+)
+
+dim(dados)
+names(dados)
+str(dados)
+head(dados)
+
+
+```
+
+* 3. RENOMEAR VARIÁVEIS
+
+```{r}
+
+dados <- dados %>%
+  rename(
+    genero = gender,
+    etnia = ethnicity,
+    ictericia = jundice,
+    historico_familiar = austim,
+    pais = contry_of_res,
+    usou_app = used_app_before,
+    escore = result,
+    faixa_etaria = age_desc,
+    relacao = relation,
+    classe_asd = `Class/ASD`
+  )
+
+```
+
+
+
+
+* 4. ANÁLISE INICIAL DA BASE
+
+```{r}
+
+dim(dados)
+names(dados)
+summary(dados)
+
+# Valores ausentes
+colSums(is.na(dados))
+round(colMeans(is.na(dados)) * 100, 2)
+
+# Duplicações
+sum(duplicated(dados))
+
+# Distribuição da variável resposta
+table(dados$classe_asd)
+
+round(
+  prop.table(table(dados$classe_asd)) * 100,
+  2
+)
+```
+
+
+
+* 5. ANÁLISE DESCRITIVA
+
+```{r}
+
+# Gênero
+table(dados$genero)
+round(
+  prop.table(table(dados$genero)) * 100,
+  2
+)
+
+# Histórico familiar
+table(dados$historico_familiar)
+round(
+  prop.table(table(dados$historico_familiar)) * 100,
+  2
+)
+
+# Icterícia
+table(dados$ictericia)
+round(
+  prop.table(table(dados$ictericia)) * 100,
+  2
+)
+
+
+```
+
+
+* 6. TRATAMENTO DA IDADE
+
+```{r}
+
+summary(dados$age)
+sd(dados$age, na.rm = TRUE)
+
+# Valor 383 tratado como ausente
+dados$age[dados$age == 383] <- NA
+
+summary(dados$age)
+sd(dados$age, na.rm = TRUE)
+```
+
+
+* 7. PROPORÇÃO DE RASTREAMENTO POSITIVO POR GRUPO
+```{r}
+
+# Gênero
+round(
+  prop.table(
+    table(
+      dados$genero,
+      dados$classe_asd
+    ),
+    margin = 1
+  ) * 100,
+  2
+)
+
+# Histórico familiar
+round(
+  prop.table(
+    table(
+      dados$historico_familiar,
+      dados$classe_asd
+    ),
+    margin = 1
+  ) * 100,
+  2
+)
+
+# Icterícia
+round(
+  prop.table(
+    table(
+      dados$ictericia,
+      dados$classe_asd
+    ),
+    margin = 1
+  ) * 100,
+  2
+)
+
+```
+
+
+
+* 8. TRATAMENTO DE ETNIA E RELAÇÃO
+
+```{r}
+
+dados <- dados %>%
+  mutate(
+    etnia = as.character(etnia),
+    relacao = as.character(relacao),
+
+    etnia = ifelse(
+      is.na(etnia),
+      "Nao informado",
+      etnia
+    ),
+
+    relacao = ifelse(
+      is.na(relacao),
+      "Nao informado",
+      relacao
+    ),
+
+    etnia = ifelse(
+      etnia == "others",
+      "Others",
+      etnia
+    )
+  )
+
+table(dados$etnia)
+table(dados$relacao)
+```
+
+
+
+* 9. VERIFICAÇÃO DO ESCORE
+```{r}
+
+soma_aq10 <- rowSums(
+  sapply(
+    dados[paste0("A", 1:10, "_Score")],
+    function(x) {
+      as.numeric(as.character(x))
+    }
+  )
+)
+
+table(
+  soma_aq10 == dados$escore
+)
+
+table(
+  escore = dados$escore,
+  classe = dados$classe_asd
+)
+
+# A faixa etária não será utilizada
+dados <- dados %>%
+  select(-faixa_etaria)
+```
+
+
+
+*10. BASE PARA MODELAGEM
+
+```{r}
+
+dados_modelo <- dados %>%
+  select(
+    age,
+    genero,
+    etnia,
+    ictericia,
+    historico_familiar,
+    pais,
+    usou_app,
+    relacao,
+    classe_asd
+  )
+
+dim(dados_modelo)
+
+table(dados_modelo$classe_asd)
+
+round(
+  prop.table(
+    table(dados_modelo$classe_asd)
+  ) * 100,
+  2
+)
+
+
+```
+
+
+*11. DIVISÃO ESTRATIFICADA TREINO/TESTE
+
+```{r}
+
+set.seed(123)
+
+id_no <- which(
+  dados_modelo$classe_asd == "NO"
+)
+
+id_yes <- which(
+  dados_modelo$classe_asd == "YES"
+)
+
+id_treino_no <- sample(
+  id_no,
+  size = floor(
+    0.80 * length(id_no)
+  )
+)
+
+id_treino_yes <- sample(
+  id_yes,
+  size = floor(
+    0.80 * length(id_yes)
+  )
+)
+
+id_treino <- c(
+  id_treino_no,
+  id_treino_yes
+)
+
+treino <- dados_modelo[
+  id_treino,
+]
+
+teste <- dados_modelo[
+  -id_treino,
+]
+
+dim(treino)
+dim(teste)
+
+table(treino$classe_asd)
+table(teste$classe_asd)
+
+round(
+  prop.table(
+    table(treino$classe_asd)
+  ) * 100,
+  2
+)
+
+round(
+  prop.table(
+    table(teste$classe_asd)
+  ) * 100,
+  2
+)
+
+```
+
+
+
+
+*12. IMPUTAÇÃO DA IDADE
+
+```{r}
+
+# Mediana calculada apenas no conjunto de treinamento
+
+mediana_idade <- median(
+  treino$age,
+  na.rm = TRUE
+)
+
+mediana_idade
+
+treino$age[
+  is.na(treino$age)
+] <- mediana_idade
+
+teste$age[
+  is.na(teste$age)
+] <- mediana_idade
+
+sum(is.na(treino$age))
+sum(is.na(teste$age))
+
+```
+
+
+* 13. PREPARAÇÃO DAS VARIÁVEIS CATEGÓRICAS
+
+```{r}
+
+vars_cat <- c(
+  "genero",
+  "etnia",
+  "ictericia",
+  "historico_familiar",
+  "pais",
+  "usou_app",
+  "relacao"
+)
+
+vars_agrupar <- c(
+  "etnia",
+  "pais",
+  "relacao"
+)
+
+vars_binarias <- c(
+  "genero",
+  "ictericia",
+  "historico_familiar",
+  "usou_app"
+)
+
+
+# Variáveis com múltiplas categorias
+
+for (v in vars_agrupar) {
+
+  treino[[v]] <- as.character(
+    treino[[v]]
+  )
+
+  teste[[v]] <- as.character(
+    teste[[v]]
+  )
+
+  # Frequências calculadas apenas no treino
+  freq <- table(
+    treino[[v]]
+  )
+
+  # Categorias com menos de 5 observações
+  raros <- names(
+    freq[freq < 5]
+  )
+
+  treino[[v]][
+    treino[[v]] %in% raros
+  ] <- "Outro_nivel"
+
+  teste[[v]][
+    teste[[v]] %in% raros
+  ] <- "Outro_nivel"
+
+  # Categorias presentes apenas no teste
+  novos <- setdiff(
+    unique(teste[[v]]),
+    unique(treino[[v]])
+  )
+
+  if (length(novos) > 0) {
+
+    teste[[v]][
+      teste[[v]] %in% novos
+    ] <- "Outro_nivel"
+
+  }
+
+  niveis <- sort(
+    unique(treino[[v]])
+  )
+
+  treino[[v]] <- factor(
+    treino[[v]],
+    levels = niveis
+  )
+
+  teste[[v]] <- factor(
+    teste[[v]],
+    levels = niveis
+  )
+}
+
+
+# Variáveis binárias
+
+for (v in vars_binarias) {
+
+  treino[[v]] <- factor(
+    treino[[v]]
+  )
+
+  teste[[v]] <- factor(
+    teste[[v]],
+    levels = levels(
+      treino[[v]]
+    )
+  )
+}
+
+
+# Conferência de NA
+sapply(
+  treino[vars_cat],
+  function(x) sum(is.na(x))
+)
+
+sapply(
+  teste[vars_cat],
+  function(x) sum(is.na(x))
+)
+
+```
+
+
+* 14. MATRIZES PARA O XBART
+
+```{r}
+
+X_treino <- cbind(
+  age = treino$age,
+
+  sapply(
+    treino[vars_cat],
+    function(x) {
+      as.integer(x) - 1
+    }
+  )
+)
+
+X_teste <- cbind(
+  age = teste$age,
+
+  sapply(
+    teste[vars_cat],
+    function(x) {
+      as.integer(x) - 1
+    }
+  )
+)
+
+X_treino <- as.matrix(
+  X_treino
+)
+
+X_teste <- as.matrix(
+  X_teste
+)
+
+storage.mode(X_treino) <- "double"
+storage.mode(X_teste) <- "double"
+
+
+# Resposta binária
+
+y_treino <- ifelse(
+  treino$classe_asd == "YES",
+  1L,
+  0L
+)
+
+y_teste <- ifelse(
+  teste$classe_asd == "YES",
+  1L,
+  0L
+)
+
+
+# Conferências
+
+dim(X_treino)
+dim(X_teste)
+
+colnames(X_treino)
+
+table(y_treino)
+table(y_teste)
+
+stopifnot(
+
+  nrow(X_treino) ==
+    length(y_treino),
+
+  nrow(X_teste) ==
+    length(y_teste),
+
+  identical(
+    colnames(X_treino),
+    colnames(X_teste)
+  ),
+
+  !anyNA(X_treino),
+
+  !anyNA(X_teste),
+
+  all(is.finite(X_treino)),
+
+  all(is.finite(X_teste))
+)
+
+```
+
+
+*15. FUNÇÃO PARA CÁLCULO DAS MÉTRICAS
+
+
+```{r}
+
+calcular_metricas <- function(
+    y_real,
+    y_pred,
+    prob_yes
+) {
+
+  TP <- sum(
+    y_real == 1 &
+      y_pred == 1
+  )
+
+  TN <- sum(
+    y_real == 0 &
+      y_pred == 0
+  )
+
+  FP <- sum(
+    y_real == 0 &
+      y_pred == 1
+  )
+
+  FN <- sum(
+    y_real == 1 &
+      y_pred == 0
+  )
+
+  acuracia <- (
+    TP + TN
+  ) / length(y_real)
+
+  sensibilidade <- ifelse(
+    TP + FN == 0,
+    NA,
+    TP / (TP + FN)
+  )
+
+  especificidade <- ifelse(
+    TN + FP == 0,
+    NA,
+    TN / (TN + FP)
+  )
+
+  precisao <- ifelse(
+    TP + FP == 0,
+    NA,
+    TP / (TP + FP)
+  )
+
+  f1 <- ifelse(
+
+    is.na(precisao) |
+      is.na(sensibilidade) |
+      precisao + sensibilidade == 0,
+
+    NA,
+
+    2 *
+      precisao *
+      sensibilidade /
+      (
+        precisao +
+          sensibilidade
+      )
+  )
+
+  balanced_accuracy <- mean(
+    c(
+      sensibilidade,
+      especificidade
+    ),
+    na.rm = TRUE
+  )
+
+  roc_obj <- pROC::roc(
+    response = y_real,
+    predictor = prob_yes,
+    levels = c(0, 1),
+    direction = "<",
+    quiet = TRUE
+  )
+
+  auc <- as.numeric(
+    pROC::auc(
+      roc_obj
+    )
+  )
+
+  data.frame(
+    Acuracia = acuracia,
+    Sensibilidade = sensibilidade,
+    Especificidade = especificidade,
+    Precisao = precisao,
+    F1 = f1,
+    Balanced_Accuracy =
+      balanced_accuracy,
+    AUC = auc
+  )
+}
+
+
+```
+
+
+
+*16. MODELO XBART DE REFERÊNCIA
+
+
+```{r}
+
+modelo_xbart <- XBART::XBART.multinomial(
+
+  y = y_treino,
+
+  num_class = 2,
+
+  X = X_treino,
+
+  num_trees = 20,
+
+  num_sweeps = 100,
+
+  burnin = 20,
+
+  alpha = 0.95,
+
+  beta = 1.25,
+
+  mtry = ncol(
+    X_treino
+  ),
+
+  p_categorical =
+    length(vars_cat),
+
+  random_seed = 123,
+
+  parallel = FALSE,
+
+  verbose = FALSE
+)
+
+
+```
+
+
+
+* 17. PREDIÇÃO DO MODELO DE REFERÊNCIA
+
+```{r}
+
+pred_xbart <- predict(
+  modelo_xbart,
+  X = X_teste,
+  burnin = 21
+)
+
+prob_yes <- pred_xbart$prob[
+  ,
+  2
+]
+
+pred_classe <- as.integer(
+  pred_xbart$label
+)
+
+matriz_confusao <- table(
+  Real = y_teste,
+  Predito = pred_classe
+)
+
+matriz_confusao
+
+
+# Métricas
+
+metricas_referencia <- calcular_metricas(
+  y_real = y_teste,
+  y_pred = pred_classe,
+  prob_yes = prob_yes
+)
+
+round(
+  metricas_referencia,
+  4
+)
+
+
+# Curva ROC
+
+roc_xbart <- pROC::roc(
+  response = y_teste,
+  predictor = prob_yes,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+plot(
+  roc_xbart,
+  main = "Curva ROC - XBART"
+)
+
+```
+
+
+
+
+* 18. BASELINE
+
+```{r}
+
+# Prever sempre a classe majoritária: NO
+
+pred_baseline <- rep(
+  0L,
+  length(y_teste)
+)
+
+acuracia_baseline <- mean(
+  pred_baseline == y_teste
+)
+
+sensibilidade_baseline <- 0
+
+especificidade_baseline <- 1
+
+balanced_accuracy_baseline <- (
+  sensibilidade_baseline +
+    especificidade_baseline
+) / 2
+
+acuracia_baseline
+balanced_accuracy_baseline
+
+
+```
+
+* 19. ESTABILIDADE DO XBART ENTRE SEMENTES
+
+```{r}
+
+sementes <- 1:100
+
+resultados_sementes <- data.frame()
+
+for (s in sementes) {
+
+  modelo <- XBART::XBART.multinomial(
+    y = y_treino,
+    num_class = 2,
+    X = X_treino,
+
+    num_trees = 20,
+    num_sweeps = 100,
+    burnin = 20,
+
+    alpha = 0.95,
+    beta = 1.25,
+
+    mtry = ncol(X_treino),
+    p_categorical = length(vars_cat),
+
+    random_seed = s,
+
+    parallel = FALSE,
+    verbose = FALSE
+  )
+
+  pred <- predict(
+    modelo,
+    X = X_teste,
+    burnin = 21
+  )
+
+  prob_yes_s <- pred$prob[, 2]
+
+  classe_s <- as.integer(
+    pred$label
+  )
+
+  metricas_s <- calcular_metricas(
+    y_real = y_teste,
+    y_pred = classe_s,
+    prob_yes = prob_yes_s
+  )
+
+  metricas_s$Semente <- s
+
+  resultados_sementes <- rbind(
+    resultados_sementes,
+    metricas_s
+  )
+}
+```
+ RESUMO DA ESTABILIDADE
+ 
+```{r}
+
+metricas_analisar <- c(
+  "Acuracia",
+  "Sensibilidade",
+  "Especificidade",
+  "Precisao",
+  "F1",
+  "Balanced_Accuracy",
+  "AUC"
+)
+
+resumo_estabilidade <- data.frame(
+
+  Metrica = metricas_analisar,
+
+  Media = sapply(
+    resultados_sementes[metricas_analisar],
+    mean,
+    na.rm = TRUE
+  ),
+
+  DP = sapply(
+    resultados_sementes[metricas_analisar],
+    sd,
+    na.rm = TRUE
+  ),
+
+  Minimo = sapply(
+    resultados_sementes[metricas_analisar],
+    min,
+    na.rm = TRUE
+  ),
+
+  Mediana = sapply(
+    resultados_sementes[metricas_analisar],
+    median,
+    na.rm = TRUE
+  ),
+
+  Maximo = sapply(
+    resultados_sementes[metricas_analisar],
+    max,
+    na.rm = TRUE
+  )
+)
+
+resumo_estabilidade %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ round(.x, 4)
+    )
+  )
+```
+ 
+
+
+
+*20. ESTABILIDADE DA IMPORTÂNCIA DAS VARIÁVEIS
+
+```{r}
+sementes <- 1:100
+
+nomes_variaveis <-
+  colnames(X_treino)
+
+lista_importancias <-
+  vector(
+    "list",
+    length(sementes)
+  )
+
+for (
+  i in seq_along(sementes)
+) {
+
+  s <- sementes[i]
+
+  modelo_imp <-
+    XBART::XBART.multinomial(
+
+      y = y_treino,
+
+      num_class = 2,
+
+      X = X_treino,
+
+      num_trees = 20,
+
+      num_sweeps = 100,
+
+      burnin = 20,
+
+      alpha = 0.95,
+
+      beta = 1.25,
+
+      mtry =
+        ncol(X_treino),
+
+      p_categorical =
+        length(vars_cat),
+
+      random_seed = s,
+
+      parallel = FALSE,
+
+      verbose = FALSE
+    )
+
+  imp_bruta <-
+    modelo_imp$importance
+
+  imp_relativa <-
+    imp_bruta /
+    sum(imp_bruta)
+
+  ranking <- rank(
+    -imp_relativa,
+    ties.method = "average"
+  )
+
+  lista_importancias[[i]] <-
+    data.frame(
+
+      Semente = s,
+
+      Variavel =
+        nomes_variaveis,
+
+      Contagem =
+        imp_bruta,
+
+      Importancia =
+        imp_relativa,
+
+      Rank =
+        ranking
+    )
+}
+
+importancias_sementes <-
+  bind_rows(
+    lista_importancias
+  )
+
+
+# Resumo
+
+resumo_importancia <-
+  importancias_sementes %>%
+  group_by(
+    Variavel
+  ) %>%
+  summarise(
+
+    Importancia_media =
+      mean(Importancia),
+
+    DP =
+      sd(Importancia),
+
+    Minimo =
+      min(Importancia),
+
+    Mediana =
+      median(Importancia),
+
+    Maximo =
+      max(Importancia),
+
+    Rank_medio =
+      mean(Rank),
+
+    Frequencia_Top3 =
+      mean(Rank <= 3),
+
+    .groups = "drop"
+  ) %>%
+  arrange(
+    Rank_medio
+  )
+
+resumo_importancia %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ round(.x, 4)
+    )
+  )
+
+
+```
+
+
+
+
+* 21. SENSIBILIDADE AO NÚMERO DE ÁRVORES
+
+
+```{r}
+# =========================================================
+# SENSIBILIDADE AO NÚMERO DE ÁRVORES
+# =========================================================
+
+arvores_testar <- c(10, 20, 50, 100)
+
+sementes <- 1:100
+
+resultados_arvores <- list()
+importancias_arvores <- list()
+
+contador <- 1
+
+for (nt in arvores_testar) {
+
+  for (s in sementes) {
+
+    # Ajuste do modelo
+    modelo_sens <- XBART::XBART.multinomial(
+      y = y_treino,
+      num_class = 2,
+      X = X_treino,
+
+      num_trees = nt,
+      num_sweeps = 100,
+      burnin = 20,
+
+      alpha = 0.95,
+      beta = 1.25,
+
+      mtry = ncol(X_treino),
+      p_categorical = length(vars_cat),
+
+      random_seed = s,
+
+      parallel = FALSE,
+      verbose = FALSE
+    )
+
+
+    # Predição
+    pred_sens <- predict(
+      modelo_sens,
+      X = X_teste,
+      burnin = 21
+    )
+
+
+    prob_yes_sens <- pred_sens$prob[, 2]
+
+    classe_sens <- as.integer(
+      pred_sens$label
+    )
+
+
+    # Métricas
+    met <- calcular_metricas(
+      y_real = y_teste,
+      y_pred = classe_sens,
+      prob_yes = prob_yes_sens
+    )
+
+
+    met$Num_trees <- nt
+    met$Semente <- s
+
+
+    # CORREÇÃO AQUI
+    resultados_arvores[[contador]] <- met
+
+
+    # -----------------------------------------------------
+    # Importância das variáveis
+    # -----------------------------------------------------
+
+    imp_bruta <- modelo_sens$importance
+
+    imp_relativa <- imp_bruta / sum(imp_bruta)
+
+    ranking <- rank(
+      -imp_relativa,
+      ties.method = "average"
+    )
+
+
+    # CORREÇÃO AQUI
+    importancias_arvores[[contador]] <- data.frame(
+      Num_trees = nt,
+      Semente = s,
+      Variavel = colnames(X_treino),
+      Contagem = imp_bruta,
+      Importancia = imp_relativa,
+      Rank = ranking
+    )
+
+
+    contador <- contador + 1
+  }
+}
+
+
+# =========================================================
+# JUNTAR RESULTADOS
+# =========================================================
+
+resultados_arvores <- bind_rows(
+  resultados_arvores
+)
+
+importancias_arvores <- bind_rows(
+  importancias_arvores
+)
+
+
+# Conferência
+head(resultados_arvores)
+head(importancias_arvores)
+
+dim(resultados_arvores)
+dim(importancias_arvores)
+
+
+# =========================================================
+# RESUMO DAS MÉTRICAS POR NÚMERO DE ÁRVORES
+# =========================================================
+
+resumo_arvores_principal <- resultados_arvores %>%
+  group_by(Num_trees) %>%
+  summarise(
+
+    Acuracia_media = mean(
+      Acuracia,
+      na.rm = TRUE
+    ),
+
+    Acuracia_DP = sd(
+      Acuracia,
+      na.rm = TRUE
+    ),
+
+    Sensibilidade_media = mean(
+      Sensibilidade,
+      na.rm = TRUE
+    ),
+
+    Sensibilidade_DP = sd(
+      Sensibilidade,
+      na.rm = TRUE
+    ),
+
+    Especificidade_media = mean(
+      Especificidade,
+      na.rm = TRUE
+    ),
+
+    Especificidade_DP = sd(
+      Especificidade,
+      na.rm = TRUE
+    ),
+
+    F1_medio = mean(
+      F1,
+      na.rm = TRUE
+    ),
+
+    F1_DP = sd(
+      F1,
+      na.rm = TRUE
+    ),
+
+    Balanced_Accuracy_media = mean(
+      Balanced_Accuracy,
+      na.rm = TRUE
+    ),
+
+    Balanced_Accuracy_DP = sd(
+      Balanced_Accuracy,
+      na.rm = TRUE
+    ),
+
+    AUC_media = mean(
+      AUC,
+      na.rm = TRUE
+    ),
+
+    AUC_DP = sd(
+      AUC,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+
+# Visualizar valores numéricos
+resumo_arvores_principal %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ round(.x, 4)
+    )
+  )
+
+
+# =========================================================
+# TABELA SOLICITADA PELO PROFESSOR
+# MÉDIA ± DESVIO-PADRÃO
+# =========================================================
+
+tabela_arvores <- resumo_arvores_principal %>%
+  transmute(
+
+    `Número de árvores` = Num_trees,
+
+    `Acurácia` = paste0(
+      sprintf("%.4f", Acuracia_media),
+      " ± ",
+      sprintf("%.4f", Acuracia_DP)
+    ),
+
+    `Sensibilidade` = paste0(
+      sprintf("%.4f", Sensibilidade_media),
+      " ± ",
+      sprintf("%.4f", Sensibilidade_DP)
+    ),
+
+    `Especificidade` = paste0(
+      sprintf("%.4f", Especificidade_media),
+      " ± ",
+      sprintf("%.4f", Especificidade_DP)
+    ),
+
+    `Acurácia balanceada` = paste0(
+      sprintf("%.4f", Balanced_Accuracy_media),
+      " ± ",
+      sprintf("%.4f", Balanced_Accuracy_DP)
+    ),
+
+    `AUC` = paste0(
+      sprintf("%.4f", AUC_media),
+      " ± ",
+      sprintf("%.4f", AUC_DP)
+    ),
+
+    `F1-score` = paste0(
+      sprintf("%.4f", F1_medio),
+      " ± ",
+      sprintf("%.4f", F1_DP)
+    )
+  )
+
+
+# Mostrar tabela
+tabela_arvores
+
+
+# Caso queira visualizar bonitinho no R Markdown
+knitr::kable(
+  tabela_arvores,
+  caption = "Desempenho do XBART segundo o número de árvores",
+  align = "c"
+)
+
+
+# =========================================================
+# SALVAR RESULTADOS
+# =========================================================
+
+write_xlsx(
+  list(
+    "Resumo_arvores" = resumo_arvores_principal,
+    "Tabela_arvores" = tabela_arvores,
+    "Metricas_execucoes" = resultados_arvores,
+    "Importancias" = importancias_arvores
+  ),
+  "sensibilidade_numero_arvores_xbart.xlsx"
+)
+
+
+saveRDS(
+  resultados_arvores,
+  "resultados_arvores.rds"
+)
+
+saveRDS(
+  importancias_arvores,
+  "importancias_arvores.rds"
+)
+```
+
+ 22. TABELA - SENSIBILIDADE AO NÚMERO DE ÁRVORES
+ CORREÇÃO QUE O PROFESSOR PEDIU
+
+```{r}
+
+resumo_arvores_principal <-
+  resultados_arvores %>%
+  group_by(
+    Num_trees
+  ) %>%
+  summarise(
+
+    Acuracia_media =
+      mean(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Acuracia_DP =
+      sd(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_media =
+      mean(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_DP =
+      sd(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    AUC_media =
+      mean(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    AUC_DP =
+      sd(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    F1_medio =
+      mean(
+        F1,
+        na.rm = TRUE
+      ),
+
+    F1_DP =
+      sd(
+        F1,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+
+# Tabela já formatada para leitura
+
+tabela_arvores <-
+  resumo_arvores_principal %>%
+  transmute(
+
+    `Número de árvores` =
+      Num_trees,
+
+    `Acurácia` =
+      paste0(
+        sprintf(
+          "%.4f",
+          Acuracia_media
+        ),
+        " ± ",
+        sprintf(
+          "%.4f",
+          Acuracia_DP
+        )
+      ),
+
+    `Acurácia balanceada` =
+      paste0(
+        sprintf(
+          "%.4f",
+          Balanced_Accuracy_media
+        ),
+        " ± ",
+        sprintf(
+          "%.4f",
+          Balanced_Accuracy_DP
+        )
+      ),
+
+    `AUC` =
+      paste0(
+        sprintf(
+          "%.4f",
+          AUC_media
+        ),
+        " ± ",
+        sprintf(
+          "%.4f",
+          AUC_DP
+        )
+      ),
+
+    `F1-score` =
+      paste0(
+        sprintf(
+          "%.4f",
+          F1_medio
+        ),
+        " ± ",
+        sprintf(
+          "%.4f",
+          F1_DP
+        )
+      )
+  )
+
+tabela_arvores
+
+
+# Se estiver usando R Markdown
+
+knitr::kable(
+  tabela_arvores,
+  caption =
+    "Desempenho do XBART segundo o número de árvores",
+  align = "c"
+)
+
+```
+
+
+
+*23. SALVAR RESULTADOS DO NÚMERO DE ÁRVORES
+
+```{r}
+
+write_xlsx(
+  list(
+
+    "Resumo_arvores" =
+      resumo_arvores_principal,
+
+    "Tabela_arvores" =
+      tabela_arvores,
+
+    "Metricas_execucoes" =
+      resultados_arvores,
+
+    "Importancias" =
+      importancias_arvores
+  ),
+
+  "sensibilidade_numero_arvores_xbart.xlsx"
+)
+
+saveRDS(
+  resultados_arvores,
+  "resultados_arvores.rds"
+)
+
+saveRDS(
+  importancias_arvores,
+  "importancias_arvores.rds"
+)
+
+
+
+```
+
+*24. SENSIBILIDADE AO ALPHA
+
+```{r}
+
+sementes_sens <- 1:30
+
+alpha_testar <- c(
+  0.80,
+  0.99
+)
+
+# Reaproveita alpha = 0.95
+# já calculado no experimento anterior
+
+referencia_alpha <-
+  resultados_arvores %>%
+  filter(
+    Num_trees == 20,
+    Semente %in%
+      sementes_sens
+  ) %>%
+  mutate(
+    Alpha = 0.95
+  )
+
+
+lista_alpha <- list()
+
+contador <- 1
+
+for (a in alpha_testar) {
+
+  for (s in sementes_sens) {
+
+    modelo_alpha <-
+      XBART::XBART.multinomial(
+
+        y = y_treino,
+
+        num_class = 2,
+
+        X = X_treino,
+
+        num_trees = 20,
+
+        num_sweeps = 100,
+
+        burnin = 20,
+
+        alpha = a,
+
+        beta = 1.25,
+
+        mtry =
+          ncol(X_treino),
+
+        p_categorical =
+          length(vars_cat),
+
+        random_seed = s,
+
+        parallel = FALSE,
+
+        verbose = FALSE
+      )
+
+    pred_alpha <- predict(
+      modelo_alpha,
+      X = X_teste,
+      burnin = 21
+    )
+
+    prob_yes_alpha <-
+      pred_alpha$prob[, 2]
+
+    classe_alpha <-
+      as.integer(
+        pred_alpha$label
+      )
+
+    met_alpha <-
+      calcular_metricas(
+        y_real = y_teste,
+        y_pred =
+          classe_alpha,
+        prob_yes =
+          prob_yes_alpha
+      )
+
+    met_alpha$Num_trees <- 20
+
+    met_alpha$Semente <- s
+
+    met_alpha$Alpha <- a
+
+    lista_alpha[
+      [contador]
+    ] <- met_alpha
+
+    contador <-
+      contador + 1
+
+    rm(
+      modelo_alpha,
+      pred_alpha
+    )
+
+    gc()
+  }
+}
+
+resultados_alpha_novos <-
+  bind_rows(
+    lista_alpha
+  )
+
+resultados_alpha <-
+  bind_rows(
+    referencia_alpha,
+    resultados_alpha_novos
+  )
+
+
+resumo_alpha <-
+  resultados_alpha %>%
+  group_by(
+    Alpha
+  ) %>%
+  summarise(
+
+    Acuracia_media =
+      mean(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Acuracia_DP =
+      sd(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Sensibilidade_media =
+      mean(
+        Sensibilidade,
+        na.rm = TRUE
+      ),
+
+    Sensibilidade_DP =
+      sd(
+        Sensibilidade,
+        na.rm = TRUE
+      ),
+
+    F1_medio =
+      mean(
+        F1,
+        na.rm = TRUE
+      ),
+
+    F1_DP =
+      sd(
+        F1,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_media =
+      mean(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_DP =
+      sd(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    AUC_media =
+      mean(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    AUC_DP =
+      sd(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+resumo_alpha %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ round(.x, 4)
+    )
+  )
+
+
+```
+
+
+
+*25. SENSIBILIDADE AO BETA
+
+```{r}
+sementes_sens <- 1:30
+
+beta_testar <- c(
+  0.75,
+  2.00
+)
+
+# Referência beta = 1.25
+
+referencia_beta <-
+  resultados_alpha %>%
+  filter(
+    Alpha == 0.95,
+    Semente %in%
+      sementes_sens
+  ) %>%
+  mutate(
+    Beta = 1.25
+  )
+
+
+lista_beta <- list()
+
+contador <- 1
+
+for (b in beta_testar) {
+
+  for (s in sementes_sens) {
+
+    modelo_beta <-
+      XBART::XBART.multinomial(
+
+        y = y_treino,
+
+        num_class = 2,
+
+        X = X_treino,
+
+        num_trees = 20,
+
+        num_sweeps = 100,
+
+        burnin = 20,
+
+        alpha = 0.95,
+
+        beta = b,
+
+        mtry =
+          ncol(X_treino),
+
+        p_categorical =
+          length(vars_cat),
+
+        random_seed = s,
+
+        parallel = FALSE,
+
+        verbose = FALSE
+      )
+
+    pred_beta <- predict(
+      modelo_beta,
+      X = X_teste,
+      burnin = 21
+    )
+
+    prob_yes_beta <-
+      pred_beta$prob[, 2]
+
+    classe_beta <-
+      as.integer(
+        pred_beta$label
+      )
+
+    met_beta <-
+      calcular_metricas(
+        y_real = y_teste,
+        y_pred =
+          classe_beta,
+        prob_yes =
+          prob_yes_beta
+      )
+
+    met_beta$Num_trees <- 20
+
+    met_beta$Semente <- s
+
+    met_beta$Alpha <- 0.95
+
+    met_beta$Beta <- b
+
+    lista_beta[
+      [contador]
+    ] <- met_beta
+
+    contador <-
+      contador + 1
+
+    rm(
+      modelo_beta,
+      pred_beta
+    )
+
+    gc()
+  }
+}
+
+resultados_beta_novos <-
+  bind_rows(
+    lista_beta
+  )
+
+resultados_beta <-
+  bind_rows(
+    referencia_beta,
+    resultados_beta_novos
+  )
+
+
+resumo_beta <-
+  resultados_beta %>%
+  group_by(
+    Beta
+  ) %>%
+  summarise(
+
+    Acuracia_media =
+      mean(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Acuracia_DP =
+      sd(
+        Acuracia,
+        na.rm = TRUE
+      ),
+
+    Sensibilidade_media =
+      mean(
+        Sensibilidade,
+        na.rm = TRUE
+      ),
+
+    Sensibilidade_DP =
+      sd(
+        Sensibilidade,
+        na.rm = TRUE
+      ),
+
+    F1_medio =
+      mean(
+        F1,
+        na.rm = TRUE
+      ),
+
+    F1_DP =
+      sd(
+        F1,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_media =
+      mean(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    Balanced_Accuracy_DP =
+      sd(
+        Balanced_Accuracy,
+        na.rm = TRUE
+      ),
+
+    AUC_media =
+      mean(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    AUC_DP =
+      sd(
+        AUC,
+        na.rm = TRUE
+      ),
+
+    .groups = "drop"
+  )
+
+resumo_beta %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ round(.x, 4)
+    )
+  )
+
+
+```
+
+
+
+* 26. SALVAR RESULTADOS FINAIS DA BASE DE AUTISMO
+
+```{r}
+
+write_xlsx(
+  list(
+
+    "Modelo_referencia" =
+      metricas_referencia,
+
+    "Estabilidade_metricas" =
+      resumo_estabilidade,
+
+    "Estabilidade_importancia" =
+      resumo_importancia,
+
+    "Sensibilidade_arvores" =
+      resumo_arvores_principal,
+
+    "Tabela_arvores" =
+      tabela_arvores,
+
+    "Sensibilidade_alpha" =
+      resumo_alpha,
+
+    "Sensibilidade_beta" =
+      resumo_beta
+  ),
+
+  "resultados_autismo_xbart.xlsx"
+)
+
+
+saveRDS(
+  resultados_alpha,
+  "resultados_alpha.rds"
+)
+
+saveRDS(
+  resultados_beta,
+  "resultados_beta.rds"
+)
+```
+
+
+```
